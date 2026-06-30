@@ -306,3 +306,4 @@ if __name__ == "__main__":
             postar_todos()
     except KeyboardInterrupt:
         print("\nBot encerrado.")
+        # versao-5-nichos-v2
