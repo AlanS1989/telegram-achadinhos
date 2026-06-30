@@ -8,7 +8,7 @@ from datetime import datetime
 import threading
 
 # ============================================================
-TELEGRAM_TOKEN = os.environ.get("7757684344:AAHpaypxmjKTsDNRw9z--wvHwmPFoTu5QQI", "")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 # ============================================================
 
 SHOPEE_APP_ID  = "18346070306"
