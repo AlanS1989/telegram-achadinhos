@@ -75,13 +75,17 @@ NICHOS = [
         "emoji":   "💄",
         "arquivo": "usados_moda.json",
         "keywords": [
-            "perfume feminino", "perfume masculino", "kit maquiagem",
-            "base maquiagem", "batom", "paleta sombra",
-            "skincare", "creme facial", "sérum", "protetor solar",
-            "shampoo", "condicionador", "tinta cabelo",
-            "vestido", "camisa feminina", "calça jeans",
-            "tenis feminino", "bolsa feminina", "acessório cabelo",
-            "conjunto fitness", "roupa academia",
+            "perfume feminino", "kit maquiagem feminino", "batom",
+            "base maquiagem", "paleta de sombra", "delineador",
+            "rímel", "blush", "iluminador maquiagem", "pincel maquiagem",
+            "skincare feminino", "sérum facial feminino", "creme antirrugas",
+            "protetor solar facial feminino", "máscara facial feminina",
+            "vestido feminino", "blusa feminina", "calça jeans feminina",
+            "saia feminina", "conjunto feminino", "macacão feminino",
+            "tênis feminino", "sandália feminina", "bolsa feminina",
+            "brinco feminino", "colar feminino", "óculos de sol feminino",
+            "esmalte", "secador de cabelo feminino", "chapinha cabelo",
+            "lingerie", "biquíni", "conjunto fitness feminino",
         ],
     },
     {
@@ -306,4 +310,3 @@ if __name__ == "__main__":
             postar_todos()
     except KeyboardInterrupt:
         print("\nBot encerrado.")
-        # versao-5-nichos-v2
