@@ -6,7 +6,8 @@ import time
 import hashlib
 from datetime import datetime
 import threading
-
+from keep_alive import keep_alive
+keep_alive()
 # ============================================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 # ============================================================
