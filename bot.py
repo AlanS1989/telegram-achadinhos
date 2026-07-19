@@ -17,7 +17,7 @@ SHOPEE_SECRET  = "YKTPIYKF4JXVZN47IDPPSG24LIFEEPWP"
 
 HORA_INICIO   = 7
 HORA_FIM      = 23
-POSTS_POR_DIA = 30
+POSTS_POR_DIA = 40
 INTERVALO     = (HORA_FIM - HORA_INICIO) * 3600 // POSTS_POR_DIA  # ~32 min
 
 # ============================================================
