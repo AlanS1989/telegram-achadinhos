@@ -3,24 +3,26 @@ import json
 import os
 import time
 import hashlib
+import random
 from datetime import datetime
 
 # ============================================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 # ============================================================
 
 SHOPEE_APP_ID = "18346070306"
 SHOPEE_SECRET = "YKTPIYKF4JXVZN47IDPPSG24LIFEEPWP"
 
-# Horários fixos para postar cupons (24h)
-HORARIOS_CUPOM = [[8, 10, 12, 15, 18, 22]
+# 6 horários fixos por dia
+HORARIOS_CUPOM = [8, 10, 12, 15, 18, 22]
 
 CANAIS = [
-    {"canal": "@achadinhosgol01",            "nome": "Geral",       "emoji": "🛍️"},
-    {"canal": "@achadinhoseletronicos01",     "nome": "Eletrônicos", "emoji": "🎮"},
-    {"canal": "@achadinhosgolddescobertas",   "nome": "Descobertas", "emoji": "🔍"},
-    {"canal": "@achadinhosgoldmoda",          "nome": "Moda",        "emoji": "💄"},
-    {"canal": "@achadinhosgoldcasa",          "nome": "Casa",        "emoji": "🏠"},
+    {"canal": "@achadinhosgol01",           "nome": "Geral",       "emoji": "🛍️", "hashtags": "#achadinhos #ofertas #shopeebrasil"},
+    {"canal": "@achadinhoseletronicos01",    "nome": "Eletrônicos", "emoji": "🎮", "hashtags": "#setupgamer #tecnologia #eletronicos"},
+    {"canal": "@achadinhosgolddescobertas",  "nome": "Descobertas", "emoji": "🔍", "hashtags": "#achadinhosshopee #viral #gadgets"},
+    {"canal": "@achadinhosgoldmoda",         "nome": "Moda",        "emoji": "💄", "hashtags": "#lookdodia #skincare #beleza"},
+    {"canal": "@achadinhosgoldcasa",         "nome": "Casa",        "emoji": "🏠", "hashtags": "#donadecasa #decoracao #casainteligente"},
 ]
 
 ARQUIVO_CONTROLE = "cupons_horario.json"
@@ -37,7 +39,6 @@ def salvar_controle(dados):
         json.dump(dados, f)
 
 def ja_postou_hoje(canal, hora):
-    """Verifica se já postou nesse canal nessa hora hoje"""
     controle = carregar_controle()
     hoje = datetime.now().strftime("%Y-%m-%d")
     chave = f"{canal}_{hora}_{hoje}"
@@ -48,12 +49,11 @@ def marcar_postado(canal, hora):
     hoje = datetime.now().strftime("%Y-%m-%d")
     chave = f"{canal}_{hora}_{hoje}"
     controle[chave] = True
-    # Limpa entradas antigas (mantém só os últimos 2 dias)
     chaves_validas = {k: v for k, v in controle.items() if hoje in k}
     salvar_controle(chaves_validas)
 
 # ----------------------------------------------------------------
-# Busca campanhas/ofertas especiais da Shopee via API
+# Busca ofertas da Shopee
 # ----------------------------------------------------------------
 def fazer_requisicao(query):
     url         = "https://open-api.affiliate.shopee.com.br/graphql"
@@ -69,12 +69,10 @@ def fazer_requisicao(query):
     r = requests.post(url, data=body_string, headers=headers, timeout=15)
     return r.json()
 
-def buscar_cupons_shopee():
-    """Busca campanhas e ofertas especiais da Shopee (cupons e promoções)"""
-    print("[Cupons] Buscando campanhas da Shopee...")
-
-    # Busca ofertas com maior desconto — produtos com cupom embutido
-    query = """{ productOfferV2(listType: 1, sortType: 5, limit: 20) {
+def buscar_melhor_oferta():
+    """Busca a melhor oferta do momento com foto"""
+    print("[Cupons] Buscando melhor oferta...")
+    query = """{ productOfferV2(listType: 1, sortType: 5, limit: 30) {
         nodes {
             productName
             priceMin
@@ -82,24 +80,103 @@ def buscar_cupons_shopee():
             priceDiscountRate
             offerLink
             commissionRate
-            periodStartTime
-            periodEndTime
+            imageUrl
+            sales
+            ratingStar
             shopName
         }
     } }"""
-
     try:
         data     = fazer_requisicao(query)
         nos      = data.get("data", {}).get("productOfferV2", {})
         produtos = nos.get("nodes", []) if nos else []
-        print(f"[Cupons] {len(produtos)} ofertas encontradas")
-        return produtos
+
+        # Filtra produtos que têm foto e desconto
+        validos = [
+            p for p in produtos
+            if p.get("imageUrl")
+            and float(p.get("priceDiscountRate", 0) or 0) > 0
+            and float(p.get("priceMin", 0) or 0) > 0
+        ]
+
+        print(f"[Cupons] {len(validos)} ofertas com foto encontradas")
+        return random.choice(validos) if validos else None
     except Exception as e:
-        print(f"[Cupons] Erro: {e}")
-        return []
+        print(f"[Cupons] Erro ao buscar: {e}")
+        return None
 
 # ----------------------------------------------------------------
-# Gerador de posts de cupom
+# Gera texto com IA (Claude API)
+# ----------------------------------------------------------------
+def gerar_texto_ia(produto, canal_info):
+    """Usa a API do Claude para gerar um texto criativo para o post"""
+    if not ANTHROPIC_API_KEY:
+        return None
+
+    nome     = str(produto.get("productName", ""))[:80]
+    preco    = produto.get("priceMin", 0)
+    desconto = int(float(produto.get("priceDiscountRate", 0) or 0) * 100)
+    vendas   = produto.get("sales", 0)
+    nota     = float(produto.get("ratingStar", 0) or 0)
+    canal    = canal_info["canal"]
+    emoji    = canal_info["emoji"]
+    hashtags = canal_info["hashtags"]
+
+    try:
+        v = int(vendas)
+        vendidos = f"{v//1000}k+ vendidos" if v >= 1000 else f"{v}+ vendidos" if v > 0 else ""
+    except:
+        vendidos = ""
+
+    preco_fmt = f"R$ {float(preco):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+
+    prompt = f"""Crie um post curto e animado para um canal de ofertas no Telegram sobre este produto da Shopee:
+
+Produto: {nome}
+Preço: {preco_fmt}
+Desconto: {desconto}%
+Vendidos: {vendidos}
+Nota: {nota}/5
+Canal: {canal_info['nome']} {emoji}
+
+Regras:
+- Máximo 8 linhas
+- Use emojis
+- Linguagem informal e animada
+- Crie urgência (sem mentir)
+- NÃO inclua o link (será adicionado depois)
+- NÃO inclua hashtags (serão adicionadas depois)
+- NÃO inclua o nome do canal (será adicionado depois)
+- Formato HTML do Telegram: use <b>negrito</b> para destacar preço e desconto
+- Termine com uma chamada para ação para clicar no link abaixo"""
+
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            },
+            json={
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 300,
+                "messages": [{"role": "user", "content": prompt}]
+            },
+            timeout=20
+        )
+        data = r.json()
+        texto_ia = data.get("content", [{}])[0].get("text", "")
+        if texto_ia:
+            print(f"[Cupons] ✨ Texto gerado por IA")
+            return texto_ia
+    except Exception as e:
+        print(f"[Cupons] Erro na IA: {e}")
+
+    return None
+
+# ----------------------------------------------------------------
+# Monta o post final
 # ----------------------------------------------------------------
 def formatar_preco(v):
     try:
@@ -107,51 +184,74 @@ def formatar_preco(v):
     except:
         return "R$ --"
 
-def formatar_desconto(v):
+def montar_post(produto, canal_info, texto_ia=None):
+    nome     = str(produto.get("productName", "Produto incrível"))[:80]
+    preco    = produto.get("priceMin", 0)
+    desconto = int(float(produto.get("priceDiscountRate", 0) or 0) * 100)
+    link     = produto.get("offerLink", "https://shopee.com.br")
+    nota     = float(produto.get("ratingStar", 0) or 0)
+    vendas   = produto.get("sales", 0)
+    canal    = canal_info["canal"]
+    emoji    = canal_info["emoji"]
+    hashtags = canal_info["hashtags"]
+
+    estrelas = "⭐" * round(nota) if nota else ""
     try:
-        return int(float(v) * 100)
+        v = int(vendas)
+        vendidos = f"📦 {v//1000}k+ vendidos" if v >= 1000 else f"📦 {v}+ vendidos" if v > 0 else ""
     except:
-        return 0
+        vendidos = ""
 
-def gerar_post_cupom(produtos, canal_info):
-    hora  = datetime.now().strftime("%H:%M")
-    emoji = canal_info["emoji"]
-    canal = canal_info["canal"]
+    if texto_ia:
+        # Post com texto da IA
+        corpo = texto_ia
+    else:
+        # Post com template padrão (fallback)
+        fogo = "🔥🔥🔥" if desconto >= 60 else "🔥🔥" if desconto >= 40 else "🔥"
+        corpo = f"""{fogo} <b>OFERTA IMPERDÍVEL</b> {fogo}
 
-    # Pega até 3 produtos com maior desconto para o post
-    top3 = sorted(
-        [p for p in produtos if float(p.get("priceDiscountRate", 0) or 0) > 0],
-        key=lambda x: float(x.get("priceDiscountRate", 0) or 0),
-        reverse=True
-    )[:3]
+{emoji} {nome}
 
-    if not top3:
-        return None
+💰 Apenas <b>{formatar_preco(preco)}</b>
+🏷️ <b>{desconto}% OFF</b> {estrelas}
+{vendidos}"""
 
-    # Monta lista de ofertas
-    lista_ofertas = ""
-    for p in top3:
-        nome     = str(p.get("productName",""))[:50]
-        preco    = p.get("priceMin", 0)
-        desconto = formatar_desconto(p.get("priceDiscountRate", 0))
-        link     = p.get("offerLink","https://shopee.com.br")
-        lista_ofertas += f"\n🔥 <a href=\"{link}\">{nome}</a>\n   💰 {formatar_preco(preco)} | {desconto}% OFF\n"
+    post = f"""{corpo}
 
-    post = f"""🏷️ <b>CUPONS E OFERTAS DO DIA — {hora}</b> 🏷️
+🛒 <a href="{link}">👉 GARANTIR ESSA OFERTA</a>
 
-{emoji} Selecionamos as melhores ofertas com desconto para você agora:
-{lista_ofertas}
-⚡ <b>Aproveite antes de acabar o estoque!</b>
-
-🛒 Clique nos links acima para garantir
-
-#cupons #ofertas #shopee #desconto
+{hashtags}
 📢 {canal}"""
 
     return post
 
 # ----------------------------------------------------------------
-def enviar(texto, canal):
+# Envia foto + texto para o Telegram
+# ----------------------------------------------------------------
+def enviar_com_foto(texto, foto_url, canal):
+    """Envia a foto do produto com o texto como legenda"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    try:
+        r = requests.post(url, json={
+            "chat_id":    canal,
+            "photo":      foto_url,
+            "caption":    texto,
+            "parse_mode": "HTML",
+        }, timeout=15)
+
+        if r.status_code == 200:
+            print(f"[{datetime.now().strftime('%d/%m %H:%M')}] ✅ Post com foto enviado para {canal}!")
+            return True
+        else:
+            print(f"❌ Erro foto [{canal}]: {r.text[:100]}")
+            # Tenta enviar só o texto como fallback
+            return enviar_texto(texto, canal)
+    except Exception as e:
+        print(f"Erro ao enviar foto: {e}")
+        return enviar_texto(texto, canal)
+
+def enviar_texto(texto, canal):
+    """Fallback: envia só texto se a foto falhar"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         r = requests.post(url, json={
@@ -161,58 +261,69 @@ def enviar(texto, canal):
             "disable_web_page_preview": False,
         }, timeout=10)
         if r.status_code == 200:
-            print(f"[{datetime.now().strftime('%d/%m %H:%M')}] ✅ Cupom enviado para {canal}!")
+            print(f"[{datetime.now().strftime('%d/%m %H:%M')}] ✅ Post texto enviado para {canal}!")
             return True
         else:
-            print(f"❌ Erro [{canal}]: {r.text}")
+            print(f"❌ Erro texto [{canal}]: {r.text[:100]}")
             return False
     except Exception as e:
-        print(f"Erro ao enviar: {e}")
+        print(f"Erro ao enviar texto: {e}")
         return False
 
 # ----------------------------------------------------------------
 def verificar_e_postar_cupons():
     agora = datetime.now().hour
 
-    # Só roda nos horários fixos definidos
     if agora not in HORARIOS_CUPOM:
         return
 
-    # Busca os produtos/cupons uma vez
-    produtos = buscar_cupons_shopee()
-    if not produtos:
-        print("[Cupons] Sem ofertas disponíveis no momento.")
+    # Busca uma oferta com foto
+    produto = buscar_melhor_oferta()
+    if not produto:
+        print("[Cupons] Sem ofertas com foto disponíveis.")
         return
 
-    # Posta em cada canal se ainda não postou nessa hora
+    foto_url = produto.get("imageUrl", "")
+
+    # Posta em cada canal
     for canal_info in CANAIS:
         canal = canal_info["canal"]
+
         if ja_postou_hoje(canal, agora):
             print(f"[Cupons] {canal} já recebeu cupom às {agora}h hoje.")
             continue
 
-        texto = gerar_post_cupom(produtos, canal_info)
-        if not texto:
-            continue
+        # Gera texto com IA (tenta primeiro)
+        texto_ia = gerar_texto_ia(produto, canal_info)
 
-        if enviar(texto, canal):
+        # Monta o post
+        texto = montar_post(produto, canal_info, texto_ia)
+
+        # Envia com foto se disponível
+        if foto_url:
+            sucesso = enviar_com_foto(texto, foto_url, canal)
+        else:
+            sucesso = enviar_texto(texto, canal)
+
+        if sucesso:
             marcar_postado(canal, agora)
 
-        time.sleep(5)  # pausa entre canais
+        time.sleep(5)
 
 # ----------------------------------------------------------------
 if __name__ == "__main__":
     print("=" * 55)
-    print("🏷️  MÓDULO DE CUPONS INICIADO")
-    print(f"⏰ Horários fixos: {HORARIOS_CUPOM}h")
+    print("🏷️  MÓDULO DE CUPONS COM IA + FOTO")
+    print(f"⏰ Horários: {HORARIOS_CUPOM}h")
     print(f"📢 Canais: {len(CANAIS)}")
+    print(f"🤖 IA: {'Ativa' if ANTHROPIC_API_KEY else 'Inativa (sem chave)'}")
     print("=" * 55)
 
     verificar_e_postar_cupons()
 
     try:
         while True:
-            time.sleep(60)  # verifica a cada 1 minuto
+            time.sleep(60)
             verificar_e_postar_cupons()
     except KeyboardInterrupt:
         print("\nMódulo de cupons encerrado.")
