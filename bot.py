@@ -5,133 +5,144 @@ import random
 import time
 import hashlib
 from datetime import datetime
-import threading
+from threading import Thread
 from keep_alive import keep_alive
+from cupons import verificar_e_postar_cupons
+
 keep_alive()
+
+# Roda o módulo de cupons em paralelo numa thread separada
+def loop_cupons():
+    while True:
+        try:
+            verificar_e_postar_cupons()
+        except Exception as e:
+            print(f"[Cupons] Erro no loop: {e}")
+        time.sleep(60)
+
+Thread(target=loop_cupons, daemon=True).start()
+print("🏷️  Módulo de cupons iniciado em paralelo!")
+
 # ============================================================
+import os
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 # ============================================================
 
 SHOPEE_APP_ID  = "18346070306"
 SHOPEE_SECRET  = "YKTPIYKF4JXVZN47IDPPSG24LIFEEPWP"
 
-HORA_INICIO   = 7
-HORA_FIM      = 23
-POSTS_POR_DIA = 40
-INTERVALO     = (HORA_FIM - HORA_INICIO) * 3600 // POSTS_POR_DIA  # ~32 min
+POSTS_POR_DIA  = 40
+HORA_INICIO    = 7
+HORA_FIM       = 23
+INTERVALO      = (HORA_FIM - HORA_INICIO) * 3600 // POSTS_POR_DIA
+ARQUIVO_USADOS = "usados.json"
 
 # ============================================================
-# NICHOS — canal + keywords + emoji + nome
+# NICHOS — canal + keywords + emoji + nome + hashtags
 # ============================================================
 NICHOS = [
     {
-        "id": "geral",
-        "canal": "@achadinhosgol01",
-        "nome": "Achadinhos Geral",
-        "emoji": "🛍️",
+        "id":      "geral",
+        "canal":   "@achadinhosgol01",
+        "nome":    "Achadinhos Geral",
+        "emoji":   "🛍️",
         "arquivo": "usados_geral.json",
         "hashtags": "#achadinhos #ofertas #shopeebrasil",
         "keywords": [
-            "oferta relâmpago", "mais vendidos", "frete grátis", "smartwatch", 
-            "fone bluetooth", "air fryer", "kit maquiagem", "mochila", 
-            "smartphone", "tênis", "luminária", "smart tv", "ventilador", 
-            "caixa de som", "kit ferramentas", "garrafa térmica", 
-            "relógio masculino", "fone sem fio", "óculos", "bolsa", 
-            "carregador", "chinelo nuvem", "garrafa de água", "guarda chuva", 
-            "meia", "boné", "carteira", "kit cueca", "relógio digital", 
-            "câmera de segurança", "ring light", "tapete", "garrafa motivacional", 
+            "oferta relâmpago", "mais vendidos", "frete grátis", "smartwatch",
+            "fone bluetooth", "air fryer", "kit maquiagem", "mochila",
+            "smartphone", "tênis", "luminária", "smart tv", "ventilador",
+            "caixa de som", "kit ferramentas", "garrafa térmica",
+            "relógio masculino", "fone sem fio", "óculos", "bolsa",
+            "carregador", "chinelo nuvem", "garrafa de água", "guarda chuva",
+            "meia", "boné", "carteira", "kit cueca", "relógio digital",
+            "câmera de segurança", "ring light", "tapete", "garrafa motivacional",
             "umidificador", "mini processador"
         ],
     },
     {
-        "id": "eletronicos",
-        "canal": "@achadinhoseletronicos01",
-        "nome": "Games e Eletrônicos",
-        "emoji": "🎮",
+        "id":      "eletronicos",
+        "canal":   "@achadinhoseletronicos01",
+        "nome":    "Games e Eletrônicos",
+        "emoji":   "🎮",
         "arquivo": "usados_eletronicos.json",
         "hashtags": "#setupgamer #tecnologia #eletronicos",
         "keywords": [
-            "fone gamer", "alexa", "smartwatch", "teclado mecânico", 
-            "mouse sem fio", "powerbank", "ssd", "ring light", 
-            "carregador turbo", "xiaomi", "caixa de som", "monitor gamer", 
-            "cabo iphone", "suporte celular", "microfone", "impressora", 
-            "hub usb", "webcam", "controle ps4", "fone de ouvido jbl", 
-            "fita led", "cabo tipo c", "pendrive", "cartão de memória", 
-            "tv box", "controle pc", "fone de ouvido bluetooth", 
-            "placa de vídeo", "processador", "cooler", "gabinete gamer", 
+            "fone gamer", "alexa", "smartwatch", "teclado mecânico",
+            "mouse sem fio", "powerbank", "ssd", "ring light",
+            "carregador turbo", "xiaomi", "caixa de som", "monitor gamer",
+            "cabo iphone", "suporte celular", "microfone", "impressora",
+            "hub usb", "webcam", "controle ps4", "fone de ouvido jbl",
+            "fita led", "cabo tipo c", "pendrive", "cartão de memória",
+            "tv box", "controle pc", "fone de ouvido bluetooth",
+            "placa de vídeo", "processador", "cooler", "gabinete gamer",
             "mousepad gamer", "roteador", "adaptador bluetooth", "carregador portátil"
         ],
     },
     {
-        "id": "descobertas",
-        "canal": "@achadinhosgolddescobertas",
-        "nome": "Descobertas do Dia",
-        "emoji": "🔍",
+        "id":      "descobertas",
+        "canal":   "@achadinhosgolddescobertas",
+        "nome":    "Descobertas do Dia",
+        "emoji":   "🔍",
         "arquivo": "usados_descobertas.json",
         "hashtags": "#achadinhosshopee #viral #gadgets",
         "keywords": [
-            "viral tiktok", "mini projetor", "umidificador", "led rgb", 
-            "organizador criativo", "garrafa térmica", "mini liquidificador", 
-            "utilidade inteligente", "fofo", "estético", "fita led", 
-            "luminária 3d", "projetor galáxia", "massageador", "caneca térmica", 
-            "lixeira inteligente", "suporte notebook", "mini impressora", 
-            "seladora de embalagem", "abridor de vinho elétrico", "escova secadora", 
-            "mini ventilador", "dispenser pasta de dente", "removedor de pelos", 
-            "mop giratório", "saboneteira automática", "triturador alho elétrico", 
-            "fone invisível", "óculos inteligente", "lancheira elétrica", 
-            "capa impermeável celular", "luz de armário", "balança digital", 
+            "viral tiktok", "mini projetor", "umidificador", "led rgb",
+            "organizador criativo", "garrafa térmica", "mini liquidificador",
+            "utilidade inteligente", "fofo", "estético", "fita led",
+            "luminária 3d", "projetor galáxia", "massageador", "caneca térmica",
+            "lixeira inteligente", "suporte notebook", "mini impressora",
+            "seladora de embalagem", "abridor de vinho elétrico", "escova secadora",
+            "mini ventilador", "dispenser pasta de dente", "removedor de pelos",
+            "mop giratório", "saboneteira automática", "triturador alho elétrico",
+            "fone invisível", "óculos inteligente", "lancheira elétrica",
+            "capa impermeável celular", "luz de armário", "balança digital",
             "mini geladeira", "depilador a laser"
         ],
     },
     {
-        "id": "moda",
-        "canal": "@achadinhosgoldmoda",
-        "nome": "Beleza e Moda",
-        "emoji": "💄",
+        "id":      "moda",
+        "canal":   "@achadinhosgoldmoda",
+        "nome":    "Beleza e Moda",
+        "emoji":   "💄",
         "arquivo": "usados_moda.json",
         "hashtags": "#lookdodia #skincare #beleza",
         "keywords": [
-            "skincare", "kit maquiagem", "perfume", "bolsa feminina", 
-            "conjunto", "tênis casual", "secador de cabelo", "óculos de sol", 
-            "moda fitness", "relógio feminino", "prata 925", "mochila feminina", 
-            "bota", "vestido longo", "pincel de maquiagem", "jaqueta", 
-            "acessórios cabelo", "body", "saia", "cropped", "batom líquido", 
-            "base matte", "delineador", "paleta de sombras", "blush", 
-            "rímel", "cílios postiços", "esponja maquiagem", "protetor solar facial", 
-            "sérum vitamina c", "chapinha", "babyliss", "biquíni", "pijama", 
+            "skincare", "kit maquiagem", "perfume", "bolsa feminina",
+            "conjunto", "tênis casual", "secador de cabelo", "óculos de sol",
+            "moda fitness", "relógio feminino", "prata 925", "mochila feminina",
+            "bota", "vestido longo", "pincel de maquiagem", "jaqueta",
+            "acessórios cabelo", "body", "saia", "cropped", "batom líquido",
+            "base matte", "delineador", "paleta de sombras", "blush",
+            "rímel", "cílios postiços", "esponja maquiagem", "protetor solar facial",
+            "sérum vitamina c", "chapinha", "babyliss", "biquíni", "pijama",
             "calça pantalona"
         ],
     },
     {
-        "id": "casa",
-        "canal": "@achadinhosgoldcasa",
-        "nome": "Casa e Utilidades",
-        "emoji": "🏠",
+        "id":      "casa",
+        "canal":   "@achadinhosgoldcasa",
+        "nome":    "Casa e Utilidades",
+        "emoji":   "🏠",
         "arquivo": "usados_casa.json",
         "hashtags": "#donadecasa #decoracao #casainteligente",
         "keywords": [
-            "air fryer", "aspirador robô", "liquidificador", "jogo de lençol", 
-            "organizador", "cafeteira", "espelho decorativo", "kit potes", 
-            "panela de pressão", "mop", "toalha de banho", "pote de vidro", 
-            "faqueiro", "toalha de mesa", "varal", "cabide veludo", 
-            "manta", "travesseiro", "papel de parede", "tapete sala", 
-            "jogo de cama", "cortina", "almofada", "quadro decorativo", 
-            "prateleira", "sapateira", "cesto de roupa", "escorredor de louça", 
-            "jogo de panelas", "batedeira", "chaleira elétrica", "frigideira antiaderente", 
+            "air fryer", "aspirador robô", "liquidificador", "jogo de lençol",
+            "organizador", "cafeteira", "espelho decorativo", "kit potes",
+            "panela de pressão", "mop", "toalha de banho", "pote de vidro",
+            "faqueiro", "toalha de mesa", "varal", "cabide veludo",
+            "manta", "travesseiro", "papel de parede", "tapete sala",
+            "jogo de cama", "cortina", "almofada", "quadro decorativo",
+            "prateleira", "sapateira", "cesto de roupa", "escorredor de louça",
+            "jogo de panelas", "batedeira", "chaleira elétrica", "frigideira antiaderente",
             "aparelho de jantar", "lixeira inox", "dispenser sabão"
         ],
-    }
+    },
 ]
-import random
 
 def obter_palavra_aleatoria(nicho):
-    """
-    Recebe o dicionário do nicho atual e retorna UMA palavra-chave aleatória
-    para usar na busca da API.
-    """
     lista_palavras = nicho.get("keywords", ["oferta"])
-    palavra_sorteada = random.choice(lista_palavras)
-    return palavra_sorteada
+    return random.choice(lista_palavras)
 
 # ----------------------------------------------------------------
 def carregar_usados(arquivo):
@@ -160,7 +171,7 @@ def fazer_requisicao(query):
     return r.json()
 
 def buscar_produtos(nicho):
-    keyword = random.choice(nicho["keywords"])
+    keyword = obter_palavra_aleatoria(nicho)
     print(f"[{nicho['nome']}] Buscando: '{keyword}'")
     query = f'{{ productOfferV2(keyword: "{keyword}", sortType: 2, limit: 50) {{ nodes {{ productName priceMin priceDiscountRate ratingStar offerLink commissionRate sales }} }} }}'
     try:
@@ -190,16 +201,17 @@ def formatar_vendas(v):
         return ""
 
 def gerar_post(p, nicho):
-    nome     = str(p.get("productName","Produto incrível"))[:80]
+    nome     = str(p.get("productName", "Produto incrível"))[:80]
     preco    = p.get("priceMin", 0)
     desconto = int(float(p.get("priceDiscountRate", 0) or 0) * 100)
     nota     = float(p.get("ratingStar", 0) or 0)
-    link     = p.get("offerLink","https://shopee.com.br")
+    link     = p.get("offerLink", "https://shopee.com.br")
     vendas   = formatar_vendas(p.get("sales", 0))
     estrelas = "⭐" * round(nota) if nota else ""
     fogo     = "🔥🔥🔥" if desconto >= 60 else "🔥🔥" if desconto >= 40 else "🔥"
     emoji    = nicho["emoji"]
     canal    = nicho["canal"]
+    hashtags = nicho["hashtags"]
     hora     = datetime.now().strftime("%H:%M")
 
     templates = [
@@ -214,6 +226,7 @@ def gerar_post(p, nicho):
 🛒 <a href="{link}">👉 COMPRAR AGORA</a>
 
 💬 Manda pra quem tá precisando!
+{hashtags}
 📢 {canal}""",
 
         f"""{emoji} <b>OFERTA RELÂMPAGO — {hora}</b> {emoji}
@@ -227,6 +240,7 @@ def gerar_post(p, nicho):
 🔗 <a href="{link}">GARANTIR OFERTA</a>
 
 ⏰ Corre antes de acabar!
+{hashtags}
 📢 {canal}""",
 
         f"""💥 <b>NÃO PERCA ESSA OFERTA!</b> 💥
@@ -240,6 +254,7 @@ def gerar_post(p, nicho):
 🛒 <a href="{link}">Comprar na Shopee</a>
 
 📲 Compartilha com seus amigos!
+{hashtags}
 📢 {canal}""",
 
         f"""🎯 <b>MAIS VENDIDO DO DIA</b>
@@ -253,6 +268,7 @@ Por apenas <b>{formatar_preco(preco)}</b>
 👇 <a href="{link}">APROVEITAR AGORA</a>
 
 💡 Siga para mais achadinhos!
+{hashtags}
 📢 {canal}""",
     ]
     return random.choice(templates)
@@ -270,7 +286,7 @@ def enviar(texto, canal):
         if r.status_code == 200:
             return True
         else:
-            print(f"❌ Erro Telegram [{canal}]: {r.text}")
+            print(f"❌ Erro [{canal}]: {r.text}")
             return False
     except Exception as e:
         print(f"Erro ao enviar [{canal}]: {e}")
@@ -309,13 +325,12 @@ def postar_nicho(nicho):
         salvar_usados(nicho["arquivo"], usados)
 
 def postar_todos():
-    """Posta em todos os nichos com 30s de intervalo entre cada um"""
     for nicho in NICHOS:
         try:
             postar_nicho(nicho)
         except Exception as e:
             print(f"Erro no nicho {nicho['nome']}: {e}")
-        time.sleep(30)  # 30s entre cada canal para não sobrecarregar a API
+        time.sleep(30)
 
 # ----------------------------------------------------------------
 if __name__ == "__main__":
@@ -328,7 +343,7 @@ if __name__ == "__main__":
         print(f"   {n['emoji']}  {n['canal']}")
     print("=" * 55)
 
-    postar_todos()  # dispara imediatamente ao iniciar
+    postar_todos()
 
     try:
         while True:
