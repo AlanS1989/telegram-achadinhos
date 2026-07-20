@@ -13,7 +13,7 @@ SHOPEE_APP_ID = "18346070306"
 SHOPEE_SECRET = "YKTPIYKF4JXVZN47IDPPSG24LIFEEPWP"
 
 # Horários fixos para postar cupons (24h)
-HORARIOS_CUPOM = [8, 12, 18, 22]
+HORARIOS_CUPOM = [[8, 10, 12, 15, 18, 22]
 
 CANAIS = [
     {"canal": "@achadinhosgol01",            "nome": "Geral",       "emoji": "🛍️"},
