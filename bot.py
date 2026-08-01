@@ -31,10 +31,10 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 SHOPEE_APP_ID  = "18346070306"
 SHOPEE_SECRET  = "YKTPIYKF4JXVZN47IDPPSG24LIFEEPWP"
 
-POSTS_POR_DIA  = 110
-HORA_INICIO    = 6
+POSTS_POR_DIA  = 30
+HORA_INICIO    = 7
 HORA_FIM       = 23
-INTERVALO      = (HORA_FIM - HORA_INICIO) * 3600 // POSTS_POR_DIA  # ~524s (~8 min)
+INTERVALO      = (HORA_FIM - HORA_INICIO) * 3600 // POSTS_POR_DIA
 ARQUIVO_USADOS = "usados.json"
 
 # ============================================================
