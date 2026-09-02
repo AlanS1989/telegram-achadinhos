@@ -7,38 +7,27 @@ import hashlib
 from datetime import datetime
 from threading import Thread
 from keep_alive import keep_alive
-from cupons import verificar_e_postar_cupons
 
 keep_alive()
 
-# Roda o módulo de cupons em paralelo numa thread separada
-def loop_cupons():
-    while True:
-        try:
-            verificar_e_postar_cupons()
-        except Exception as e:
-            print(f"[Cupons] Erro no loop: {e}")
-        time.sleep(60)
-
-Thread(target=loop_cupons, daemon=True).start()
-print("🏷️  Módulo de cupons iniciado em paralelo!")
-
 # ============================================================
-import os
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 # ============================================================
 
 SHOPEE_APP_ID  = "18346070306"
 SHOPEE_SECRET  = "YKTPIYKF4JXVZN47IDPPSG24LIFEEPWP"
 
-POSTS_POR_DIA  = 30
+POSTS_POR_DIA  = 110
 HORA_INICIO    = 7
 HORA_FIM       = 23
-INTERVALO      = (HORA_FIM - HORA_INICIO) * 3600 // POSTS_POR_DIA
-ARQUIVO_USADOS = "usados.json"
+INTERVALO      = (HORA_FIM - HORA_INICIO) * 3600 // POSTS_POR_DIA  # ~524s (~8 min)
+
+# Horários fixos para cupons
+HORARIOS_CUPOM = [8, 10, 12, 15, 18, 22]
+ARQUIVO_CONTROLE_CUPOM = "cupons_horario.json"
 
 # ============================================================
-# NICHOS — canal + keywords + emoji + nome + hashtags
+# NICHOS
 # ============================================================
 NICHOS = [
     {
@@ -140,11 +129,9 @@ NICHOS = [
     },
 ]
 
-def obter_palavra_aleatoria(nicho):
-    lista_palavras = nicho.get("keywords", ["oferta"])
-    return random.choice(lista_palavras)
-
-# ----------------------------------------------------------------
+# ============================================================
+# FUNÇÕES GERAIS
+# ============================================================
 def carregar_usados(arquivo):
     if os.path.exists(arquivo):
         with open(arquivo) as f:
@@ -155,7 +142,6 @@ def salvar_usados(arquivo, lista):
     with open(arquivo, "w") as f:
         json.dump(lista[-500:], f)
 
-# ----------------------------------------------------------------
 def fazer_requisicao(query):
     url         = "https://open-api.affiliate.shopee.com.br/graphql"
     timestamp   = int(time.time())
@@ -170,21 +156,6 @@ def fazer_requisicao(query):
     r = requests.post(url, data=body_string, headers=headers, timeout=15)
     return r.json()
 
-def buscar_produtos(nicho):
-    keyword = obter_palavra_aleatoria(nicho)
-    print(f"[{nicho['nome']}] Buscando: '{keyword}'")
-    query = f'{{ productOfferV2(keyword: "{keyword}", sortType: 2, limit: 50) {{ nodes {{ productName priceMin priceDiscountRate ratingStar offerLink commissionRate sales }} }} }}'
-    try:
-        data     = fazer_requisicao(query)
-        nos      = data.get("data", {}).get("productOfferV2", {})
-        produtos = nos.get("nodes", []) if nos else []
-        print(f"[{nicho['nome']}] {len(produtos)} produtos encontrados")
-        return produtos
-    except Exception as e:
-        print(f"[{nicho['nome']}] Erro: {e}")
-        return []
-
-# ----------------------------------------------------------------
 def formatar_preco(v):
     try:
         return f"R$ {float(v):,.2f}".replace(",","X").replace(".",",").replace("X",".")
@@ -196,16 +167,33 @@ def formatar_vendas(v):
         v = int(v)
         if v >= 1000:
             return f"{v//1000}k+ vendidos"
-        return f"{v}+ vendidos"
+        return f"{v}+ vendidos" if v > 0 else ""
     except:
         return ""
 
-def gerar_post(p, nicho):
-    nome     = str(p.get("productName", "Produto incrível"))[:80]
+# ============================================================
+# MÓDULO DE PRODUTOS (loop principal)
+# ============================================================
+def buscar_produtos(nicho):
+    keyword = random.choice(nicho["keywords"])
+    print(f"[{nicho['nome']}] Buscando: '{keyword}'")
+    query = f'{{ productOfferV2(keyword: "{keyword}", sortType: 2, limit: 50) {{ nodes {{ productName priceMin priceDiscountRate ratingStar offerLink commissionRate sales }} }} }}'
+    try:
+        data     = fazer_requisicao(query)
+        nos      = data.get("data", {}).get("productOfferV2", {})
+        produtos = nos.get("nodes", []) if nos else []
+        print(f"[{nicho['nome']}] {len(produtos)} produtos")
+        return produtos
+    except Exception as e:
+        print(f"[{nicho['nome']}] Erro: {e}")
+        return []
+
+def gerar_post_produto(p, nicho):
+    nome     = str(p.get("productName","Produto incrível"))[:80]
     preco    = p.get("priceMin", 0)
     desconto = int(float(p.get("priceDiscountRate", 0) or 0) * 100)
     nota     = float(p.get("ratingStar", 0) or 0)
-    link     = p.get("offerLink", "https://shopee.com.br")
+    link     = p.get("offerLink","https://shopee.com.br")
     vendas   = formatar_vendas(p.get("sales", 0))
     estrelas = "⭐" * round(nota) if nota else ""
     fogo     = "🔥🔥🔥" if desconto >= 60 else "🔥🔥" if desconto >= 40 else "🔥"
@@ -273,8 +261,7 @@ Por apenas <b>{formatar_preco(preco)}</b>
     ]
     return random.choice(templates)
 
-# ----------------------------------------------------------------
-def enviar(texto, canal):
+def enviar_mensagem(texto, canal):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         r = requests.post(url, json={
@@ -283,16 +270,10 @@ def enviar(texto, canal):
             "parse_mode":               "HTML",
             "disable_web_page_preview": False,
         }, timeout=10)
-        if r.status_code == 200:
-            return True
-        else:
-            print(f"❌ Erro [{canal}]: {r.text}")
-            return False
-    except Exception as e:
-        print(f"Erro ao enviar [{canal}]: {e}")
+        return r.status_code == 200
+    except:
         return False
 
-# ----------------------------------------------------------------
 def postar_nicho(nicho):
     agora = datetime.now().hour
     if agora < HORA_INICIO or agora >= HORA_FIM:
@@ -317,9 +298,9 @@ def postar_nicho(nicho):
         return
 
     produto = random.choice(filtrados)
-    texto   = gerar_post(produto, nicho)
+    texto   = gerar_post_produto(produto, nicho)
 
-    if enviar(texto, nicho["canal"]):
+    if enviar_mensagem(texto, nicho["canal"]):
         print(f"[{datetime.now().strftime('%d/%m %H:%M')}] ✅ [{nicho['nome']}] Post enviado!")
         usados.append(produto.get("productName",""))
         salvar_usados(nicho["arquivo"], usados)
@@ -330,19 +311,162 @@ def postar_todos():
             postar_nicho(nicho)
         except Exception as e:
             print(f"Erro no nicho {nicho['nome']}: {e}")
-        time.sleep(30)
+        time.sleep(15)
 
-# ----------------------------------------------------------------
+# ============================================================
+# MÓDULO DE CUPONS (thread paralela)
+# ============================================================
+def carregar_controle_cupom():
+    if os.path.exists(ARQUIVO_CONTROLE_CUPOM):
+        with open(ARQUIVO_CONTROLE_CUPOM) as f:
+            return json.load(f)
+    return {}
+
+def salvar_controle_cupom(dados):
+    with open(ARQUIVO_CONTROLE_CUPOM, "w") as f:
+        json.dump(dados, f)
+
+def ja_postou_cupom(canal, hora):
+    controle = carregar_controle_cupom()
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    return controle.get(f"{canal}_{hora}_{hoje}", False)
+
+def marcar_cupom_postado(canal, hora):
+    controle = carregar_controle_cupom()
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    controle[f"{canal}_{hora}_{hoje}"] = True
+    chaves_validas = {k: v for k, v in controle.items() if hoje in k}
+    salvar_controle_cupom(chaves_validas)
+
+def buscar_ofertas_cupom():
+    print("[Cupons] Buscando melhores ofertas...")
+    query = """{ productOfferV2(listType: 1, sortType: 5, limit: 30) {
+        nodes {
+            productName priceMin priceDiscountRate
+            offerLink imageUrl sales ratingStar
+        }
+    } }"""
+    try:
+        data     = fazer_requisicao(query)
+        nos      = data.get("data", {}).get("productOfferV2", {})
+        produtos = nos.get("nodes", []) if nos else []
+        validos  = [
+            p for p in produtos
+            if float(p.get("priceDiscountRate", 0) or 0) > 0
+            and float(p.get("priceMin", 0) or 0) > 0
+        ]
+        print(f"[Cupons] {len(validos)} ofertas encontradas")
+        return validos
+    except Exception as e:
+        print(f"[Cupons] Erro: {e}")
+        return []
+
+def gerar_post_cupom(produtos, canal_info):
+    emoji    = canal_info["emoji"]
+    canal    = canal_info["canal"]
+    hashtags = canal_info["hashtags"]
+    hora     = datetime.now().strftime("%H:%M")
+
+    top3 = sorted(
+        produtos,
+        key=lambda x: float(x.get("priceDiscountRate", 0) or 0),
+        reverse=True
+    )[:3]
+
+    if not top3:
+        return None
+
+    lista = ""
+    for p in top3:
+        nome     = str(p.get("productName",""))[:50]
+        preco    = formatar_preco(p.get("priceMin", 0))
+        desconto = int(float(p.get("priceDiscountRate", 0) or 0) * 100)
+        link     = p.get("offerLink","https://shopee.com.br")
+        lista   += f"\n🔥 <a href=\"{link}\">{nome}</a>\n   💰 {preco} | {desconto}% OFF\n"
+
+    return f"""🏷️ <b>CUPONS E OFERTAS — {hora}</b> 🏷️
+
+{emoji} Selecionamos as melhores ofertas com desconto agora:
+{lista}
+⚡ <b>Aproveite antes de acabar!</b>
+
+{hashtags}
+📢 {canal}"""
+
+def enviar_cupom_com_foto(texto, foto_url, canal):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    try:
+        r = requests.post(url, json={
+            "chat_id":    canal,
+            "photo":      foto_url,
+            "caption":    texto,
+            "parse_mode": "HTML",
+        }, timeout=15)
+        if r.status_code == 200:
+            return True
+        # Fallback sem foto
+        return enviar_mensagem(texto, canal)
+    except:
+        return enviar_mensagem(texto, canal)
+
+def verificar_e_postar_cupons():
+    agora = datetime.now().hour
+    if agora not in HORARIOS_CUPOM:
+        return
+
+    produtos = buscar_ofertas_cupom()
+    if not produtos:
+        return
+
+    foto_url = produtos[0].get("imageUrl", "") if produtos else ""
+
+    for canal_info in NICHOS:
+        canal = canal_info["canal"]
+        if ja_postou_cupom(canal, agora):
+            continue
+
+        texto = gerar_post_cupom(produtos, canal_info)
+        if not texto:
+            continue
+
+        if foto_url:
+            sucesso = enviar_cupom_com_foto(texto, foto_url, canal)
+        else:
+            sucesso = enviar_mensagem(texto, canal)
+
+        if sucesso:
+            print(f"[{datetime.now().strftime('%d/%m %H:%M')}] 🏷️ Cupom enviado para {canal}!")
+            marcar_cupom_postado(canal, agora)
+
+        time.sleep(5)
+
+def loop_cupons():
+    while True:
+        try:
+            verificar_e_postar_cupons()
+        except Exception as e:
+            print(f"[Cupons] Erro no loop: {e}")
+        time.sleep(60)
+
+# ============================================================
+# INICIALIZAÇÃO
+# ============================================================
 if __name__ == "__main__":
     print("=" * 55)
-    print("🤖 BOT ACHADINHOS — 5 NICHOS")
+    print("🤖 ACHADINHOBOT — 5 NICHOS + CUPONS")
     print(f"📅 {POSTS_POR_DIA} posts/dia por canal | {HORA_INICIO}h às {HORA_FIM}h")
-    print(f"⏱️  Ciclo a cada {INTERVALO}s (~{INTERVALO//60} min)")
+    print(f"⏱️  1 post a cada {INTERVALO}s (~{INTERVALO//60} min)")
+    print(f"🏷️  Cupons nos horários: {HORARIOS_CUPOM}h")
     print("📢 Canais:")
     for n in NICHOS:
         print(f"   {n['emoji']}  {n['canal']}")
     print("=" * 55)
 
+    # Inicia o módulo de cupons em thread paralela
+    Thread(target=loop_cupons, daemon=True).start()
+    print("🏷️  Módulo de cupons ativo!")
+
+    # Loop principal de produtos
     postar_todos()
 
     try:
