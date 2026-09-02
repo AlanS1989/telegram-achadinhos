@@ -13,18 +13,36 @@ keep_alive()
 # ============================================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 # ============================================================
+# ATENÇÃO: mova essas duas credenciais para variáveis de ambiente
+# (igual foi feito com TELEGRAM_TOKEN) antes de compartilhar/publicar
+# este código em qualquer lugar. Deixá-las no código é um risco de
+# segurança real: quem tiver acesso ao arquivo tem acesso à sua conta
+# de afiliado Shopee.
+SHOPEE_APP_ID  = os.environ.get("SHOPEE_APP_ID", "18346070306")
+SHOPEE_SECRET  = os.environ.get("SHOPEE_SECRET", "YKTPIYKF4JXVZN47IDPPSG24LIFEEPWP")
 
-SHOPEE_APP_ID  = "18346070306"
-SHOPEE_SECRET  = "YKTPIYKF4JXVZN47IDPPSG24LIFEEPWP"
-
-POSTS_POR_DIA  = 110
+POSTS_POR_DIA  = 200
 HORA_INICIO    = 7
 HORA_FIM       = 23
-INTERVALO      = (HORA_FIM - HORA_INICIO) * 3600 // POSTS_POR_DIA  # ~524s (~8 min)
+INTERVALO      = (HORA_FIM - HORA_INICIO) * 3600 // POSTS_POR_DIA  # ~4-5 min
 
-# Horários fixos para cupons
+# Horários fixos para o cupom geral do app
 HORARIOS_CUPOM = [8, 10, 12, 15, 18, 22]
 ARQUIVO_CONTROLE_CUPOM = "cupons_horario.json"
+
+# Horários fixos para os posts de "Recomendados do Dia" (intercalados com cupom)
+HORARIOS_RECOMENDADOS = [9, 13, 17, 21]
+ARQUIVO_CONTROLE_RECOMENDADOS = "recomendados_horario.json"
+
+# ============================================================
+# CUPONS GERAIS SHOPEE (cupom de carrinho, não é por produto)
+# Atualize esta lista manualmente sempre que a Shopee mudar os valores/link.
+# ============================================================
+CUPONS_ATIVOS = [
+    {"desconto": "R$30 OFF", "condicao": "em compras acima de R$299"},
+    {"desconto": "R$90 OFF", "condicao": "em compras acima de R$899"},
+]
+LINK_CUPONS = "https://s.shopee.com.br/8Ko5h7hrcP"
 
 # ============================================================
 # NICHOS
@@ -156,6 +174,32 @@ def fazer_requisicao(query):
     r = requests.post(url, data=body_string, headers=headers, timeout=15)
     return r.json()
 
+def gerar_link_afiliado(url_original, sub_ids=None):
+    """
+    Converte qualquer link Shopee em um link afiliado rastreado pela SUA conta
+    (usa o mesmo SHOPEE_APP_ID/SHOPEE_SECRET já usado nas outras chamadas).
+    Comissão é gerada em cima de qualquer compra feita após o clique, dentro
+    da janela de atribuição da Shopee — não só no item do link.
+    sub_ids: lista de até 5 strings curtas pra identificar a origem do clique
+             (ex: id do canal) nos relatórios de conversão.
+    """
+    sub_ids = sub_ids or []
+    sub_ids_json = json.dumps(sub_ids[:5])
+    mutation = (
+        'mutation{ generateShortLink(input:{originUrl:"%s", subIds:%s}){ shortLink } }'
+        % (url_original, sub_ids_json)
+    )
+    try:
+        data = fazer_requisicao(mutation)
+        if "errors" in data:
+            print(f"[Link Afiliado] Erro da API: {data['errors']}")
+            return url_original
+        link = data.get("data", {}).get("generateShortLink", {}).get("shortLink")
+        return link or url_original
+    except Exception as e:
+        print(f"[Link Afiliado] Erro: {e}")
+        return url_original
+
 def formatar_preco(v):
     try:
         return f"R$ {float(v):,.2f}".replace(",","X").replace(".",",").replace("X",".")
@@ -172,6 +216,31 @@ def formatar_vendas(v):
         return ""
 
 # ============================================================
+# CONTROLE DE HORÁRIOS (usado por cupom e recomendados)
+# ============================================================
+def carregar_controle(arquivo):
+    if os.path.exists(arquivo):
+        with open(arquivo) as f:
+            return json.load(f)
+    return {}
+
+def salvar_controle(arquivo, dados):
+    with open(arquivo, "w") as f:
+        json.dump(dados, f)
+
+def ja_postou(arquivo, canal, hora):
+    controle = carregar_controle(arquivo)
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    return controle.get(f"{canal}_{hora}_{hoje}", False)
+
+def marcar_postado(arquivo, canal, hora):
+    controle = carregar_controle(arquivo)
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    controle[f"{canal}_{hora}_{hoje}"] = True
+    chaves_validas = {k: v for k, v in controle.items() if hoje in k}
+    salvar_controle(arquivo, chaves_validas)
+
+# ============================================================
 # MÓDULO DE PRODUTOS (loop principal)
 # ============================================================
 def buscar_produtos(nicho):
@@ -179,7 +248,9 @@ def buscar_produtos(nicho):
     print(f"[{nicho['nome']}] Buscando: '{keyword}'")
     query = f'{{ productOfferV2(keyword: "{keyword}", sortType: 2, limit: 50) {{ nodes {{ productName priceMin priceDiscountRate ratingStar offerLink commissionRate sales }} }} }}'
     try:
-        data     = fazer_requisicao(query)
+        data = fazer_requisicao(query)
+        if "errors" in data:
+            print(f"[{nicho['nome']}] Erro da API: {data['errors']}")
         nos      = data.get("data", {}).get("productOfferV2", {})
         produtos = nos.get("nodes", []) if nos else []
         print(f"[{nicho['nome']}] {len(produtos)} produtos")
@@ -274,6 +345,19 @@ def enviar_mensagem(texto, canal):
     except:
         return False
 
+def enviar_mensagem_markdown(texto, canal):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
+        r = requests.post(url, json={
+            "chat_id":                  canal,
+            "text":                     texto,
+            "parse_mode":               "Markdown",
+            "disable_web_page_preview": False,
+        }, timeout=10)
+        return r.status_code == 200
+    except:
+        return False
+
 def postar_nicho(nicho):
     agora = datetime.now().hour
     if agora < HORA_INICIO or agora >= HORA_FIM:
@@ -314,138 +398,143 @@ def postar_todos():
         time.sleep(15)
 
 # ============================================================
-# MÓDULO DE CUPONS (thread paralela)
+# MÓDULO DE CUPOM GERAL (thread paralela)
+# Cupom fixo de carrinho — não vem da API de produtos, é editado manualmente
+# na lista CUPONS_ATIVOS lá em cima.
 # ============================================================
-def carregar_controle_cupom():
-    if os.path.exists(ARQUIVO_CONTROLE_CUPOM):
-        with open(ARQUIVO_CONTROLE_CUPOM) as f:
-            return json.load(f)
-    return {}
+def gerar_post_cupom_geral(link):
+    linhas = "\n\n".join(f"🏷️ *{c['desconto']} {c['condicao']}*" for c in CUPONS_ATIVOS)
+    return f"""🚨 *CUPONS SHOPEE* 🚨
 
-def salvar_controle_cupom(dados):
-    with open(ARQUIVO_CONTROLE_CUPOM, "w") as f:
-        json.dump(dados, f)
+{linhas}
 
-def ja_postou_cupom(canal, hora):
-    controle = carregar_controle_cupom()
-    hoje = datetime.now().strftime("%Y-%m-%d")
-    return controle.get(f"{canal}_{hora}_{hoje}", False)
+✅ *Válido em todo app*
 
-def marcar_cupom_postado(canal, hora):
-    controle = carregar_controle_cupom()
-    hoje = datetime.now().strftime("%Y-%m-%d")
-    controle[f"{canal}_{hora}_{hoje}"] = True
-    chaves_validas = {k: v for k, v in controle.items() if hoje in k}
-    salvar_controle_cupom(chaves_validas)
-
-def buscar_ofertas_cupom():
-    print("[Cupons] Buscando melhores ofertas...")
-    query = """{ productOfferV2(listType: 1, sortType: 5, limit: 30) {
-        nodes {
-            productName priceMin priceDiscountRate
-            offerLink imageUrl sales ratingStar
-        }
-    } }"""
-    try:
-        data     = fazer_requisicao(query)
-        nos      = data.get("data", {}).get("productOfferV2", {})
-        produtos = nos.get("nodes", []) if nos else []
-        validos  = [
-            p for p in produtos
-            if float(p.get("priceDiscountRate", 0) or 0) > 0
-            and float(p.get("priceMin", 0) or 0) > 0
-        ]
-        print(f"[Cupons] {len(validos)} ofertas encontradas")
-        return validos
-    except Exception as e:
-        print(f"[Cupons] Erro: {e}")
-        return []
-
-def gerar_post_cupom(produtos, canal_info):
-    emoji    = canal_info["emoji"]
-    canal    = canal_info["canal"]
-    hashtags = canal_info["hashtags"]
-    hora     = datetime.now().strftime("%H:%M")
-
-    top3 = sorted(
-        produtos,
-        key=lambda x: float(x.get("priceDiscountRate", 0) or 0),
-        reverse=True
-    )[:3]
-
-    if not top3:
-        return None
-
-    lista = ""
-    for p in top3:
-        nome     = str(p.get("productName",""))[:50]
-        preco    = formatar_preco(p.get("priceMin", 0))
-        desconto = int(float(p.get("priceDiscountRate", 0) or 0) * 100)
-        link     = p.get("offerLink","https://shopee.com.br")
-        lista   += f"\n🔥 <a href=\"{link}\">{nome}</a>\n   💰 {preco} | {desconto}% OFF\n"
-
-    return f"""🏷️ <b>CUPONS E OFERTAS — {hora}</b> 🏷️
-
-{emoji} Selecionamos as melhores ofertas com desconto agora:
-{lista}
-⚡ <b>Aproveite antes de acabar!</b>
-
-{hashtags}
-📢 {canal}"""
-
-def enviar_cupom_com_foto(texto, foto_url, canal):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-    try:
-        r = requests.post(url, json={
-            "chat_id":    canal,
-            "photo":      foto_url,
-            "caption":    texto,
-            "parse_mode": "HTML",
-        }, timeout=15)
-        if r.status_code == 200:
-            return True
-        # Fallback sem foto
-        return enviar_mensagem(texto, canal)
-    except:
-        return enviar_mensagem(texto, canal)
+🔗 *Pega aqui os CUPONS*
+{link}"""
 
 def verificar_e_postar_cupons():
     agora = datetime.now().hour
     if agora not in HORARIOS_CUPOM:
         return
 
-    produtos = buscar_ofertas_cupom()
-    if not produtos:
-        return
-
-    foto_url = produtos[0].get("imageUrl", "") if produtos else ""
-
     for canal_info in NICHOS:
         canal = canal_info["canal"]
-        if ja_postou_cupom(canal, agora):
+        if ja_postou(ARQUIVO_CONTROLE_CUPOM, canal, agora):
             continue
 
-        texto = gerar_post_cupom(produtos, canal_info)
-        if not texto:
-            continue
+        # link gerado com a SUA conta de afiliado, com sub_id do canal pra
+        # você conseguir ver no relatório de conversão de onde veio cada venda
+        link  = gerar_link_afiliado(LINK_CUPONS, sub_ids=[canal_info["id"], "cupom"])
+        texto = gerar_post_cupom_geral(link)
 
-        if foto_url:
-            sucesso = enviar_cupom_com_foto(texto, foto_url, canal)
-        else:
-            sucesso = enviar_mensagem(texto, canal)
-
-        if sucesso:
+        if enviar_mensagem_markdown(texto, canal):
             print(f"[{datetime.now().strftime('%d/%m %H:%M')}] 🏷️ Cupom enviado para {canal}!")
-            marcar_cupom_postado(canal, agora)
+            marcar_postado(ARQUIVO_CONTROLE_CUPOM, canal, agora)
 
         time.sleep(5)
 
-def loop_cupons():
+# ============================================================
+# MÓDULO DE RECOMENDADOS (thread paralela)
+# Busca em várias keywords do nicho e escolhe os 3 melhores por
+# vendas + avaliação, publicando um post curado por canal.
+# ============================================================
+def buscar_recomendados(nicho, amostra=5):
+    candidatos = []
+    keywords_amostra = random.sample(nicho["keywords"], min(amostra, len(nicho["keywords"])))
+    for kw in keywords_amostra:
+        query = f'{{ productOfferV2(keyword: "{kw}", sortType: 2, limit: 20) {{ nodes {{ productName priceMin priceDiscountRate ratingStar offerLink commissionRate sales }} }} }}'
+        try:
+            data = fazer_requisicao(query)
+            if "errors" in data:
+                print(f"[Recomendados-{nicho['nome']}] Erro da API p/ '{kw}': {data['errors']}")
+                continue
+            nos      = data.get("data", {}).get("productOfferV2", {})
+            produtos = nos.get("nodes", []) if nos else []
+            candidatos.extend(produtos)
+        except Exception as e:
+            print(f"[Recomendados-{nicho['nome']}] Erro: {e}")
+        time.sleep(1)  # evita bater rate limit da API
+    return candidatos
+
+def gerar_post_recomendados(produtos, nicho):
+    validos = [p for p in produtos if float(p.get("priceMin") or 0) > 0]
+    if not validos:
+        return None
+
+    def score(p):
+        vendas = float(p.get("sales") or 0)
+        rating = float(p.get("ratingStar") or 0)
+        return vendas * 0.7 + (rating * 1000) * 0.3
+
+    # remove duplicados por nome antes de ranquear
+    vistos = set()
+    unicos = []
+    for p in sorted(validos, key=score, reverse=True):
+        nome = p.get("productName", "")
+        if nome not in vistos:
+            vistos.add(nome)
+            unicos.append(p)
+    top3 = unicos[:3]
+    if not top3:
+        return None
+
+    emoji    = nicho["emoji"]
+    canal    = nicho["canal"]
+    hashtags = nicho["hashtags"]
+    hora     = datetime.now().strftime("%H:%M")
+
+    linhas = ""
+    for p in top3:
+        nome     = str(p.get("productName", ""))[:60]
+        preco    = formatar_preco(p.get("priceMin", 0))
+        vendas   = formatar_vendas(p.get("sales", 0))
+        nota     = float(p.get("ratingStar", 0) or 0)
+        estrelas = "⭐" * round(nota) if nota else ""
+        link     = p.get("offerLink", "https://shopee.com.br")
+        linhas  += f'\n{emoji} <a href="{link}"><b>{nome}</b></a>\n   💰 {preco} | {vendas} {estrelas}\n'
+
+    return f"""🌟 <b>RECOMENDADOS DO DIA — {hora}</b> 🌟
+
+Os mais vendidos e bem avaliados de hoje:
+{linhas}
+👆 Clica no produto pra conferir!
+
+{hashtags}
+📢 {canal}"""
+
+def verificar_e_postar_recomendados():
+    agora = datetime.now().hour
+    if agora not in HORARIOS_RECOMENDADOS:
+        return
+
+    for nicho in NICHOS:
+        canal = nicho["canal"]
+        if ja_postou(ARQUIVO_CONTROLE_RECOMENDADOS, canal, agora):
+            continue
+
+        produtos = buscar_recomendados(nicho)
+        texto    = gerar_post_recomendados(produtos, nicho)
+        if not texto:
+            continue
+
+        if enviar_mensagem(texto, canal):
+            print(f"[{datetime.now().strftime('%d/%m %H:%M')}] 🌟 Recomendados enviado para {canal}!")
+            marcar_postado(ARQUIVO_CONTROLE_RECOMENDADOS, canal, agora)
+
+        time.sleep(10)
+
+def loop_extras():
+    """Thread paralela: cuida de cupom geral + recomendados, checando a cada minuto."""
     while True:
         try:
             verificar_e_postar_cupons()
         except Exception as e:
             print(f"[Cupons] Erro no loop: {e}")
+        try:
+            verificar_e_postar_recomendados()
+        except Exception as e:
+            print(f"[Recomendados] Erro no loop: {e}")
         time.sleep(60)
 
 # ============================================================
@@ -453,18 +542,19 @@ def loop_cupons():
 # ============================================================
 if __name__ == "__main__":
     print("=" * 55)
-    print("🤖 ACHADINHOBOT — 5 NICHOS + CUPONS")
+    print("🤖 ACHADINHOBOT — 5 NICHOS + CUPOM + RECOMENDADOS")
     print(f"📅 {POSTS_POR_DIA} posts/dia por canal | {HORA_INICIO}h às {HORA_FIM}h")
     print(f"⏱️  1 post a cada {INTERVALO}s (~{INTERVALO//60} min)")
-    print(f"🏷️  Cupons nos horários: {HORARIOS_CUPOM}h")
+    print(f"🏷️  Cupom geral nos horários: {HORARIOS_CUPOM}h")
+    print(f"🌟 Recomendados nos horários: {HORARIOS_RECOMENDADOS}h")
     print("📢 Canais:")
     for n in NICHOS:
         print(f"   {n['emoji']}  {n['canal']}")
     print("=" * 55)
 
-    # Inicia o módulo de cupons em thread paralela
-    Thread(target=loop_cupons, daemon=True).start()
-    print("🏷️  Módulo de cupons ativo!")
+    # Inicia cupom + recomendados em thread paralela
+    Thread(target=loop_extras, daemon=True).start()
+    print("🏷️  Módulo de cupom/recomendados ativo!")
 
     # Loop principal de produtos
     postar_todos()
